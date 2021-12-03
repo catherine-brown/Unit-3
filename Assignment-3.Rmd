@@ -1,9 +1,335 @@
 ---
-title: "Assignment-3"
+title: "Assignment-3 `r format(Sys.Date(), '%B %d, %Y')`"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
 ```
 
+```{r}
+
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c32328d3e656a329d36a0b9e0851276e9dcb731a")
+```
+
+```{r eval = F}
+
+temp <- tempfile()
+download.file("https://www2.census.gov/programs-surveys/acs/data/pums/2018/5-Year/csv_hca.zip",destfile = temp, mode = "wb")
+
+pums_hca_2018_5yr <- read_csv(unzip(temp,"psam_h06.csv"))
+
+unlink(temp)
+
+```
+```{r include = F}
+
+pums_hca_2018_5yr <- read_csv("psam_h06.csv")
+
+```
+
+The outcome of interest I selected for this assignment was % of households in poverty.  Based on some research, I defined "poverty" in the Bay Area as a household living with income less than $40,000 per year. (Taking Count: A Study on Poverty in the Bay Area) According a study titled "Taking Count: A Study on Poverty in the Bay Area", households including partners and no children were most economically secure, while single parent households (especially single women) were least economically secure.  In addition, the study mentioned that renters were less economically secure than homeowners. Therefore, I selected household type and renters as my two independent variables.
+
+```{r eval = F}
+
+library(tidycensus)
+
+census_api_key("c32328d3e656a329d36a0b9e0851276e9dcb731a")
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+pums_vars_2018_distinct_hh <- 
+  pums_vars_2018 %>%
+  distinct(var_code, var_label, data_type, level) %>% 
+  filter(level == "housing")
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "FES",
+    "HHT",
+    "PARTNER",
+    "HINCP",
+    "FRNTP",
+    "TEN"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+
+saveRDS(ca_pums, "ca_pums.rds")
+```
+
+```{r}
+
+library(tidycensus)
+library(tigris)
+library(corrplot)
+
+census_api_key("c32328d3e656a329d36a0b9e0851276e9dcb731a")
+
+ca_pums <- readRDS("ca_pums.rds")
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+bay_pums_summary <-
+  bay_pums %>% 
+  filter(!duplicated(SERIALNO)) %>% 
+  mutate(
+    low_income = ifelse(
+      (HINCP < 40000),
+      WGTP,
+      0
+    )) %>%
+  mutate(
+    renter = ifelse(
+      (TEN_label == "Rented"), 
+      WGTP,
+      0))%>%
+  mutate(
+    single_female = ifelse(
+      (HHT == 3),
+      WGTP,
+      0
+    )) %>%
+  group_by(PUMA) %>% 
+  summarize(
+    perc_low_income =
+      sum(low_income, na.rm =T)/sum(WGTP, na.rm = T)*100,
+    perc_renter = 
+      sum(renter, na.rm = T)/sum(WGTP, na.rm = T)*100,
+    perc_single_female = 
+      sum(single_female, na.rm = T)/sum(WGTP, na.rm = T)*100
+  ) %>% 
+  left_join(
+    bay_pumas %>% 
+      select(PUMACE10),
+    by = c("PUMA" = "PUMACE10")
+  )
+
+correlationplot <- bay_pums_summary %>% 
+  select(
+    perc_renter, 
+    perc_single_female,
+    perc_low_income
+  ) %>% 
+  cor()
+
+corrplot(
+  correlationplot, 
+  method = "number",
+  type = "upper"
+)
+
+ggplot(
+  data = bay_pums_summary,
+  aes(
+      x = perc_low_income,
+      y = perc_single_female
+    )
+) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+ggplot(
+  data = bay_pums_summary,
+  aes(
+      x = perc_low_income,
+      y = perc_renter
+    )
+) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+ggplot(
+  data = bay_pums_summary,
+  aes(
+      x = perc_single_female,
+      y = perc_renter
+    )
+) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+```
+
+
+The analysis shows some correlation between single female households and low income, as defined by a household earning less than $40,000 per year in the Bay Area.  There also seems to be some, slightly smaller correlation between low income and renters.  There appears to be no correlation between single female run households and whether or households are renting. The literature implies that there is some causal effect related to single mothers and renters having less economic security. It is intuitive that a single parent would earn less income than a couple that could either bring in dual income or allow one partner to remain a caretaker while the other seeks higher earning opportunities.  Single mothers are likely to have particular challenges in balancing caretaking responsibilities with income earning opportunities.  It seems more difficult to determine causality between renting and low income. It seems likely that any causal relationship works in the opposite direction - households with low income could have a difficult time purchasing their own home.
+
+"Taking Count 2020: A Study on Poverty in the Bay Area" also links poverty to educational attainment and race.  According to the study, black communities experience higher rater of poverty than white and Asian only households.  In addition, the study found that a high school degree or some college did not have much impact on alleviating poverty.  For those reasons, for my second multiple regression, this time using CBG level data, I maintain percentage of households in poverty as my outcome of interest and dependent variable, and use percent black and percent no college degree as my independent variables.  I maintain a "Bay Area poverty line" of $40,000 for this analysis.
+
+```{r}
+
+library(tidyverse)
+library(censusapi)
+library(corrplot)
+
+Sys.setenv(CENSUS_KEY="c32328d3e656a329d36a0b9e0851276e9dcb731a")
+
+acs_vars_2018_5yr <-
+  listCensusMetadata(
+    name = "2018/acs/acs5",
+    type = "variables"
+  )
+
+bay_multiple_tract <- 
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2018,
+    region = "tract:*",
+    regionin = "state:06+county:001,013,041,055,075,081,085,095,097",
+    vars = c(
+      "B19001B_001E",
+      "B19001_001E",
+      "B19001_002E",
+      "B19001_003E",
+      "B19001_004E",
+      "B19001_005E",
+      "B19001_006E",
+      "B19001_007E",
+      "B19001_008E",
+      "B15003_001E",
+      "B15003_021E",
+      "B15003_022E",
+      "B15003_023E",
+      "B15003_024E",
+      "B15003_025E"
+    )
+  ) %>% 
+  transmute(
+    tract = paste0(state, county, tract),
+    perc_black = B19001B_001E / B19001_001E,
+    perc_under40K = (B19001_002E + B19001_003E + B19001_004E + B19001_005E + B19001_006E + B19001_007E + B19001_008E) / B19001_001E,
+    perc_no_collegedegree = 1 - (B15003_021E + B15003_022E + B15003_023E + B15003_024E +B15003_025E) / B15003_001E
+  ) %>% 
+  filter(
+    !is.na(perc_black), 
+    !is.na(perc_under40K),
+    !is.na(perc_no_collegedegree)
+  )
+
+correlationplot <- bay_multiple_tract %>% 
+  select(
+    perc_black, 
+    perc_no_collegedegree,
+    perc_under40K
+  ) %>% 
+  cor()
+
+corrplot(
+  correlationplot, 
+  method = "number",
+  type = "upper"
+)
+
+```
+There does appear to be some correlation between race and educational attainment with poverty.  It is likely that there is some degree of a causal relationship between the dependent variables and outcome in this case. The link between race and poverty could be due to systemic injustice and racism.  The link between educational attainment and poverty is likely to relate to a limited number of jobs in the Bay Area that provide necessary economic security that do not require a college degree.
+
+I ran the same multiple regression for the year 2013 and achieved similar results.  The correlation between "no college degree" and "under 40,000 dollars in income" seems to have slightly decreased in that period.  The correlation between "percent black" and "percent under 40,000 dollars seems to have slightly increased over the course of that time period. Based on this, it is likely that the situation has not changed much between the 2013 and 2018 censuses. Any systemic injustice or lack of opportunity for individuals to earn a living wage without a college degree was not reformed meaningfully during that period.
+
+
+```{r}
+
+library(tidyverse)
+library(censusapi)
+library(corrplot)
+
+Sys.setenv(CENSUS_KEY="c32328d3e656a329d36a0b9e0851276e9dcb731a")
+
+acs_vars_2013_5yr <-
+  listCensusMetadata(
+    name = "2013/acs/acs5",
+    type = "variables"
+  )
+
+bay_multiple_tract <- 
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2013,
+    region = "tract:*",
+    regionin = "state:06+county:001,013,041,055,075,081,085,095,097",
+    vars = c(
+      "B19001B_001E",
+      "B19001_001E",
+      "B19001_002E",
+      "B19001_003E",
+      "B19001_004E",
+      "B19001_005E",
+      "B19001_006E",
+      "B19001_007E",
+      "B19001_008E",
+      "B15003_001E",
+      "B15003_021E",
+      "B15003_022E",
+      "B15003_023E",
+      "B15003_024E",
+      "B15003_025E"
+    )
+  ) %>% 
+  transmute(
+    tract = paste0(state, county, tract),
+    perc_black = B19001B_001E / B19001_001E,
+    perc_under40K = (B19001_002E + B19001_003E + B19001_004E + B19001_005E + B19001_006E + B19001_007E + B19001_008E) / B19001_001E,
+    perc_no_collegedegree = 1 - (B15003_021E + B15003_022E + B15003_023E + B15003_024E +B15003_025E) / B15003_001E
+  ) %>% 
+  filter(
+    !is.na(perc_black), 
+    !is.na(perc_under40K),
+    !is.na(perc_no_collegedegree)
+  )
+
+correlationplot <- bay_multiple_tract %>% 
+  select(
+    perc_black, 
+    perc_no_collegedegree,
+    perc_under40K
+  ) %>% 
+  cor()
+
+corrplot(
+  correlationplot, 
+  method = "number",
+  type = "upper"
+)
+
+```
