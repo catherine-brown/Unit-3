@@ -333,3 +333,11 @@ corrplot(
 )
 
 ```
+Sources:
+
+1) "Poverty," Office of Disease Prevention and Health Promotion. https://www.healthypeople.gov/2020/topics-objectives/topic/social-determinants-health/interventions-resources/poverty
+
+2) Schneider, Daniel, Benjamin Bowyer, Jacob Leos-Urbel, and Jamie Austin. "Taking Count 2020: A Study on Poverty in the Bay Area," Tipping Point Community, Berkeley University of California, and Othering & Belonging Institute.  https://tippingpoint.org/wp-content/uploads/2020/07/Taking-Count-2020-A-Study-on-Poverty-in-the-Bay-Area.pdf
+
+3) "Why Poverty Persists," National Bureau of Economic Research. The Digest: No. 6. June 2006. https://www.nber.org/digest/jun06/why-poverty-persists
+
